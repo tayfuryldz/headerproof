@@ -97,7 +97,7 @@ jobs:
       - name: Checksums
         working-directory: release
         run: sha256sum headerproof-* > checksums.txt
-      - uses: sigstore/cosign-installer@faadad0cce49287aee09b3a48701e75088a2c6ad # v4.0.0
+      - uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
       - name: Sign checksums
         run: cosign sign-blob release/checksums.txt --bundle release/checksums.txt.sigstore.json --yes
       - name: Create release
@@ -150,7 +150,7 @@ jobs:
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
-      - uses: sigstore/cosign-installer@faadad0cce49287aee09b3a48701e75088a2c6ad # v4.0.0
+      - uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
       - name: Sign image
         env:
           DIGEST: ${{ steps.build.outputs.digest }}
