@@ -8,7 +8,7 @@ that release.
 
 ## Community contributors
 
-No external contribution has reached `main` yet.
+- [@PandaHUN777](https://github.com/PandaHUN777) — release smoke-test coverage and release binary CI integration ([#18](https://github.com/TayfurYldz/headerproof/pull/18))
 
 ## Credit policy
 
