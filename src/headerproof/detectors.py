@@ -550,12 +550,27 @@ def analyze_header_probe(
         and control
         and clean_before.status == probe.status == victim.status == control.status
     )
+    negative_control_evidence = {
+        "same_key_clean_before_completed": snapshot_completed(clean_before),
+        "same_key_clean_before_has_no_canary": not clean_before_locations,
+        "same_key_clean_before_request_has_no_canary": not request_contains_canary(clean_before, canary),
+        "fresh_key_control_completed": snapshot_completed(control),
+        "fresh_key_control_has_no_canary": not control_locations,
+        "fresh_key_control_request_has_no_canary": not request_contains_canary(control, canary),
+        "poison_request_contains_canary": request_contains_canary(probe, canary),
+        "poison_response_contains_canary": bool(locations),
+        "clean_victim_request_has_no_canary": not request_contains_canary(victim, canary),
+        "clean_victim_contains_canary": bool(victim_locations),
+    }
+    negative_control_attribution_valid = all(negative_control_evidence.values())
+
     state_machine_checks = {
         "clean_before_completed": snapshot_completed(clean_before),
         "poison_completed": snapshot_completed(probe),
         "clean_victim_completed": snapshot_completed(victim),
         "fresh_control_completed": snapshot_completed(control),
         "cache_key_relationship_valid": cache_key_relationship,
+        "negative_control_attribution_valid": negative_control_attribution_valid,
         "isolated_client_contexts": isolated_client_contexts,
         "response_status_consistent": status_consistent,
         "clean_before_has_no_canary": not clean_before_locations,
@@ -596,6 +611,7 @@ def analyze_header_probe(
         "victim_cache_indicators": victim_indicators,
         "fresh_key_control_cache_indicators": control_indicators,
         "cache_key_evidence": cache_key_evidence,
+        "negative_control_evidence": negative_control_evidence,
         "shared_cache_confirmed": shared_confirmed,
     }
     if victim_locations and (cacheable or victim_indicators):

@@ -221,3 +221,46 @@ def test_unmodified_cache_flow_passes_every_gate() -> None:
     confirmed = next(signal for signal in signals if signal["type"] == "cache_poisoning_shared_cache_confirmed")
     assert all(confirmed["evidence"]["state_machine_checks"].values())
     assert confirmed["assessment"]["technical_gate"] == "passed"
+
+
+def test_confirmed_cache_flow_records_explicit_negative_control_attribution() -> None:
+    flow = valid_flow()
+    poison = flow["poison"]
+    assert isinstance(poison, header_active_scan.HttpSnapshot)
+    signals = header_active_scan.analyze_header_probe(
+        "X-Forwarded-Host", CANARY, "gate", flow["clean"], poison, flow["victim"], flow["control"], False
+    )
+    confirmed = next(signal for signal in signals if signal["type"] == "cache_poisoning_shared_cache_confirmed")
+    evidence = confirmed["evidence"]
+    assert evidence["state_machine_checks"]["negative_control_attribution_valid"] is True
+    assert all(evidence["negative_control_evidence"].values())
+
+
+@pytest.mark.parametrize(
+    "mutate",
+    [
+        remove_clean,
+        remove_control,
+        poison_clean_baseline,
+        poison_fresh_control,
+        omit_poison_header,
+        contaminate_victim_request,
+        contaminate_control_request,
+    ],
+    ids=lambda function: function.__name__,
+)
+def test_negative_control_mutations_fail_explicit_attribution_gate(mutate: Mutation) -> None:
+    flow = valid_flow()
+    mutate(flow)
+    poison = flow["poison"]
+    assert isinstance(poison, header_active_scan.HttpSnapshot)
+    signals = header_active_scan.analyze_header_probe(
+        "X-Forwarded-Host", CANARY, "gate", flow["clean"], poison, flow["victim"], flow["control"], False
+    )
+    reproduced = next(
+        (signal for signal in signals if signal["type"] == "cache_poisoning_cross_request_reproduction"), None
+    )
+    if reproduced is not None:
+        assert reproduced["evidence"]["state_machine_checks"]["negative_control_attribution_valid"] is False
+        assert reproduced["assessment"]["technical_gate"] == "failed"
+    assert not any(signal["type"] == "cache_poisoning_shared_cache_confirmed" for signal in signals)
