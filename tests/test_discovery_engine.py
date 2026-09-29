@@ -415,3 +415,25 @@ def test_adaptive_baseline_never_suppresses_attributable_marker_or_cache_evidenc
     assert response_headers["age"]
     assert response_headers["etag"]
     assert response_headers["x-cache"] == "MISS"
+
+
+def test_discovered_header_finding_links_back_to_singleton_discovery_probes() -> None:
+    result = run_fixture()
+    confirmed = next(
+        signal
+        for signal in result["signals"]
+        if signal["type"] == "cache_poisoning_shared_cache_confirmed"
+        and signal["evidence"]["probe_header"] == "X-Forwarded-Scheme"
+    )
+    trace = confirmed["evidence"]["discovery_trace"]
+    assert trace["header"] == "X-Forwarded-Scheme"
+    assert trace["role"] == "discovery-singleton"
+    assert len(trace["probe_ids"]) >= 2
+
+    persisted = {
+        probe["probe_id"]
+        for probe in result["probes"]
+        if probe["role"] == "discovery-singleton"
+        and "X-Forwarded-Scheme" in (probe.get("exchange") or {}).get("request", {}).get("headers", {})
+    }
+    assert set(trace["probe_ids"]) <= persisted

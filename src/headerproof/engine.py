@@ -463,6 +463,7 @@ def scan_url(url: str, args: argparse.Namespace) -> dict[str, Any]:
         add_task("crlf", "header-injection", crlf_task)
 
     discovered_headers: list[str] = []
+    discovery_proof_ids: dict[str, list[str]] = {}
     if "cache-poisoning" in checks and not args.no_cache_confirm:
         default_headers = default_header_probe_names(args.header, args.header_probe_limit)
         candidates = dedupe_candidates(DISCOVERY_HEADERS, [*default_headers, *args.header])
@@ -505,6 +506,8 @@ def scan_url(url: str, args: argparse.Namespace) -> dict[str, Any]:
                 if response is None:
                     return DiscoveryDecision("inconclusive", "request_not_completed")
                 decision = response_differs(discovery_baseline, response, discovery_marker)
+                if len(candidate_names) == 1 and decision.outcome == "affected":
+                    discovery_proof_ids.setdefault(candidate_names[0].casefold(), []).append(probe_id)
                 if decision.outcome != "affected" or decision.reason == "marker_reflected":
                     return decision
                 controls: list[HttpSnapshot] = []
@@ -705,6 +708,16 @@ def scan_url(url: str, args: argparse.Namespace) -> dict[str, Any]:
                     control,
                     save_body,
                 )
+                discovery_ids = discovery_proof_ids.get(header_name.casefold(), [])
+                if discovery_ids:
+                    for signal in found:
+                        evidence = signal.get("evidence")
+                        if isinstance(evidence, dict):
+                            evidence["discovery_trace"] = {
+                                "header": header_name,
+                                "probe_ids": list(discovery_ids),
+                                "role": "discovery-singleton",
+                            }
                 if oob_enabled and budget.remaining() > 0:
                     events = wait_for_event(args.oob_api, canary, timeout=min(args.oob_wait, budget.remaining()))
                     found.extend(analyze_oob_header_probe(header_name, canary, events, probe, save_body))

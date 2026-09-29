@@ -292,3 +292,23 @@ def test_reused_poison_context_blocks_independent_victim_confirmation() -> None:
     assert reproduced["evidence"]["independent_victim_evidence"]["victim_context_differs_from_poison"] is False
     assert reproduced["assessment"]["technical_gate"] == "failed"
     assert not any(signal["type"] == "cache_poisoning_shared_cache_confirmed" for signal in signals)
+
+
+def test_confirmed_flow_exposes_exact_cache_proof_trace() -> None:
+    flow = valid_flow()
+    poison = flow["poison"]
+    assert isinstance(poison, header_active_scan.HttpSnapshot)
+    signals = header_active_scan.analyze_header_probe(
+        "X-Forwarded-Host", CANARY, "gate", flow["clean"], poison, flow["victim"], flow["control"], False
+    )
+    confirmed = next(signal for signal in signals if signal["type"] == "cache_poisoning_shared_cache_confirmed")
+    trace = confirmed["evidence"]["proof_trace"]
+    assert {stage: item["probe_id"] for stage, item in trace.items()} == {
+        "clean_before": "gate-clean-before",
+        "poison": "gate-poison",
+        "victim": "gate-victim",
+        "fresh_control": "gate-fresh-control",
+    }
+    assert {item["role"] for item in trace.values()} == {
+        "cache-clean-before", "cache-poison", "cache-victim", "cache-fresh-control"
+    }

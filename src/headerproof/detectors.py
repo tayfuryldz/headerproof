@@ -604,8 +604,32 @@ def analyze_header_probe(
         "state_machine_checks": state_machine_checks,
         "shared_cache_hit_markers": shared_markers,
     }
+    proof_trace = {
+        "clean_before": {
+            "probe_id": f"{probe_id}-clean-before",
+            "role": "cache-clean-before",
+            "client_context": clean_before.client_context if clean_before else "",
+        },
+        "poison": {
+            "probe_id": f"{probe_id}-poison",
+            "role": "cache-poison",
+            "client_context": probe.client_context,
+        },
+        "victim": {
+            "probe_id": f"{probe_id}-victim",
+            "role": "cache-victim",
+            "client_context": victim.client_context if victim else "",
+        },
+        "fresh_control": {
+            "probe_id": f"{probe_id}-fresh-control",
+            "role": "cache-fresh-control",
+            "client_context": control.client_context if control else "",
+        },
+    }
+
     state_extra = {
         "probe_id": probe_id,
+        "proof_trace": proof_trace,
         "canary": canary,
         "probe_header": header_name,
         "poison_locations": locations,

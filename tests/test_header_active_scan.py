@@ -19,7 +19,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 import header_active_scan  # noqa: E402
-from headerproof.output import default_output_root, reserve_output_dir  # noqa: E402
+from headerproof.output import EvidenceWriter, default_output_root, reserve_output_dir  # noqa: E402
 
 
 def make_snapshot(
@@ -1078,3 +1078,55 @@ def test_cache_confirmation_uses_distinct_transport_instances(monkeypatch: pytes
     assert set(roles) == {"cache-clean-before", "cache-poison", "cache-victim", "cache-fresh-control"}
     transports = [instances_by_context[roles[role]] for role in roles]
     assert all(left is not right for index, left in enumerate(transports) for right in transports[index + 1 :])
+
+
+def test_persisted_cache_finding_trace_resolves_to_probe_jsonl(tmp_path: Path) -> None:
+    SharedCacheProxyHandler.cache = {}
+    origin = ThreadingHTTPServer(("127.0.0.1", 0), CacheOriginHandler)
+    origin_thread = threading.Thread(target=origin.serve_forever, daemon=True)
+    origin_thread.start()
+    SharedCacheProxyHandler.origin_port = origin.server_port
+    proxy = ThreadingHTTPServer(("127.0.0.1", 0), SharedCacheProxyHandler)
+    proxy_thread = threading.Thread(target=proxy.serve_forever, daemon=True)
+    proxy_thread.start()
+    try:
+        url = f"http://127.0.0.1:{proxy.server_port}/trace"
+        args = header_active_scan.parse_cli_args([url])
+        args.enabled_checks = {"cache-poisoning", "header-injection", "content-spoofing"}
+        args.header = ["X-Forwarded-Host"]
+        args.header_probe_limit = 1
+        args.per_url_concurrency = 1
+        args.concurrency = 1
+        args.no_live_alerts = True
+        result = header_active_scan.scan_url(url, args)
+    finally:
+        proxy.shutdown()
+        proxy.server_close()
+        proxy_thread.join(timeout=1)
+        origin.shutdown()
+        origin.server_close()
+        origin_thread.join(timeout=1)
+
+    confirmed = next(signal for signal in result["signals"] if signal["type"] == "cache_poisoning_shared_cache_confirmed")
+    out_dir = tmp_path / "evidence"
+    out_dir.mkdir()
+    writer = EvidenceWriter(out_dir, {"schema_version": confirmed["schema_version"], "run_id": "trace-test"})
+    writer.append_result(result)
+    writer.finalize()
+
+    persisted_signal = next(
+        json.loads(line)
+        for line in (out_dir / "signals.jsonl").read_text().splitlines()
+        if json.loads(line)["type"] == "cache_poisoning_shared_cache_confirmed"
+    )
+    persisted_probes = {
+        (probe["probe_id"], probe["role"]): probe
+        for probe in map(json.loads, (out_dir / "probes.jsonl").read_text().splitlines())
+    }
+    trace = persisted_signal["evidence"]["proof_trace"]
+    assert len(trace) == 4
+    for stage in trace.values():
+        persisted = persisted_probes[(stage["probe_id"], stage["role"])]
+        assert persisted["client_context"] == stage["client_context"]
+        assert persisted["exchange"] is not None
+        assert persisted["status"] == "completed"
