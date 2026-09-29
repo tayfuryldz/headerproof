@@ -1034,3 +1034,47 @@ def test_scan_applies_configured_request_headers(monkeypatch: pytest.MonkeyPatch
 
     assert result["status"] == "scanned"
     assert seen == [{"Cookie": "session=fixture", "Authorization": "Bearer fixture"}]
+
+
+def test_cache_confirmation_uses_distinct_transport_instances(monkeypatch: pytest.MonkeyPatch) -> None:
+    instances_by_context: dict[str, header_active_scan.HttpClient] = {}
+    original_fetch = header_active_scan.HttpClient.fetch
+
+    def recording_fetch(self, url, method="GET", headers=None, timeout=None, client_context="default"):
+        instances_by_context[client_context] = self
+        return original_fetch(self, url, method, headers, timeout, client_context)
+
+    monkeypatch.setattr(header_active_scan.HttpClient, "fetch", recording_fetch)
+    origin = ThreadingHTTPServer(("127.0.0.1", 0), CacheOriginHandler)
+    origin_thread = threading.Thread(target=origin.serve_forever, daemon=True)
+    origin_thread.start()
+    SharedCacheProxyHandler.origin_port = origin.server_port
+    SharedCacheProxyHandler.cache = {}
+    proxy = ThreadingHTTPServer(("127.0.0.1", 0), SharedCacheProxyHandler)
+    proxy_thread = threading.Thread(target=proxy.serve_forever, daemon=True)
+    proxy_thread.start()
+    try:
+        args = header_active_scan.parse_cli_args([f"http://127.0.0.1:{proxy.server_port}/cache"])
+        args.enabled_checks = {"cache-poisoning", "header-injection", "content-spoofing"}
+        args.header = ["X-Forwarded-Host"]
+        args.header_probe_limit = 1
+        args.per_url_concurrency = 1
+        args.concurrency = 1
+        args.no_live_alerts = True
+        result = header_active_scan.scan_url(f"http://127.0.0.1:{proxy.server_port}/cache", args)
+    finally:
+        proxy.shutdown()
+        proxy.server_close()
+        proxy_thread.join(timeout=1)
+        origin.shutdown()
+        origin.server_close()
+        origin_thread.join(timeout=1)
+
+    roles = {
+        probe["role"]: probe["client_context"]
+        for probe in result["probes"]
+        if probe["role"] in {"cache-clean-before", "cache-poison", "cache-victim", "cache-fresh-control"}
+    }
+    assert set(roles) == {"cache-clean-before", "cache-poison", "cache-victim", "cache-fresh-control"}
+    transports = [instances_by_context[roles[role]] for role in roles]
+    assert all(left is not right for index, left in enumerate(transports) for right in transports[index + 1 :])

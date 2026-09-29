@@ -264,3 +264,31 @@ def test_negative_control_mutations_fail_explicit_attribution_gate(mutate: Mutat
         assert reproduced["evidence"]["state_machine_checks"]["negative_control_attribution_valid"] is False
         assert reproduced["assessment"]["technical_gate"] == "failed"
     assert not any(signal["type"] == "cache_poisoning_shared_cache_confirmed" for signal in signals)
+
+
+def test_confirmed_flow_records_independent_clean_victim_proof() -> None:
+    flow = valid_flow()
+    poison = flow["poison"]
+    assert isinstance(poison, header_active_scan.HttpSnapshot)
+    signals = header_active_scan.analyze_header_probe(
+        "X-Forwarded-Host", CANARY, "gate", flow["clean"], poison, flow["victim"], flow["control"], False
+    )
+    confirmed = next(signal for signal in signals if signal["type"] == "cache_poisoning_shared_cache_confirmed")
+    evidence = confirmed["evidence"]
+    assert evidence["state_machine_checks"]["independent_clean_victim_confirmed"] is True
+    assert all(evidence["independent_victim_evidence"].values())
+
+
+def test_reused_poison_context_blocks_independent_victim_confirmation() -> None:
+    flow = valid_flow()
+    replace_snapshot(flow, "victim", context="poison")
+    poison = flow["poison"]
+    assert isinstance(poison, header_active_scan.HttpSnapshot)
+    signals = header_active_scan.analyze_header_probe(
+        "X-Forwarded-Host", CANARY, "gate", flow["clean"], poison, flow["victim"], flow["control"], False
+    )
+    reproduced = next(signal for signal in signals if signal["type"] == "cache_poisoning_cross_request_reproduction")
+    assert reproduced["evidence"]["state_machine_checks"]["independent_clean_victim_confirmed"] is False
+    assert reproduced["evidence"]["independent_victim_evidence"]["victim_context_differs_from_poison"] is False
+    assert reproduced["assessment"]["technical_gate"] == "failed"
+    assert not any(signal["type"] == "cache_poisoning_shared_cache_confirmed" for signal in signals)

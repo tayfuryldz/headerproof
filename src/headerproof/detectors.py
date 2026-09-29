@@ -544,6 +544,14 @@ def analyze_header_probe(
     )
     client_contexts = [item.client_context for item in snapshots if item is not None]
     isolated_client_contexts = len(client_contexts) == 4 and len(set(client_contexts)) == 4
+    independent_victim_evidence = {
+        "victim_completed": snapshot_completed(victim),
+        "victim_context_differs_from_poison": bool(victim and victim.client_context != probe.client_context),
+        "victim_request_has_no_canary": not request_contains_canary(victim, canary),
+        "victim_response_contains_canary": bool(victim_locations),
+        "victim_has_shared_cache_hit_marker": bool(shared_markers),
+    }
+    independent_clean_victim_confirmed = all(independent_victim_evidence.values())
     status_consistent = bool(
         clean_before
         and victim
@@ -571,6 +579,7 @@ def analyze_header_probe(
         "fresh_control_completed": snapshot_completed(control),
         "cache_key_relationship_valid": cache_key_relationship,
         "negative_control_attribution_valid": negative_control_attribution_valid,
+        "independent_clean_victim_confirmed": independent_clean_victim_confirmed,
         "isolated_client_contexts": isolated_client_contexts,
         "response_status_consistent": status_consistent,
         "clean_before_has_no_canary": not clean_before_locations,
@@ -612,6 +621,7 @@ def analyze_header_probe(
         "fresh_key_control_cache_indicators": control_indicators,
         "cache_key_evidence": cache_key_evidence,
         "negative_control_evidence": negative_control_evidence,
+        "independent_victim_evidence": independent_victim_evidence,
         "shared_cache_confirmed": shared_confirmed,
     }
     if victim_locations and (cacheable or victim_indicators):
