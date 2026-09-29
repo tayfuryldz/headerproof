@@ -62,6 +62,9 @@ def scan_config(args: argparse.Namespace) -> dict[str, Any]:
         "config_file_loaded": bool(getattr(args, "config_path", "")),
         "preflight_enabled": not args.no_preflight,
         "cache_confirmation_enabled": not args.no_cache_confirm,
+        "dynamic_header_discovery_enabled": (
+            "cache-poisoning" in args.enabled_checks and not args.no_cache_confirm
+        ),
         "follow_redirects": args.follow_redirects,
         "save_body_samples": args.save_body_samples,
         "fp_mode": args.fp_mode,
