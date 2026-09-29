@@ -1130,3 +1130,55 @@ def test_persisted_cache_finding_trace_resolves_to_probe_jsonl(tmp_path: Path) -
         assert persisted["client_context"] == stage["client_context"]
         assert persisted["exchange"] is not None
         assert persisted["status"] == "completed"
+
+
+def test_snapshot_summary_redacts_only_exact_configured_header_values() -> None:
+    snapshot = make_snapshot(
+        {},
+        request_headers={
+            "Authorization": "Bearer configured-secret",
+            "X-Forwarded-Host": "scanner-canary",
+        },
+    )
+    snapshot.persistence_redactions = {
+        "authorization": "Bearer configured-secret",
+        "X-Forwarded-Host": "configured-host-value",
+    }
+    exchange = header_active_scan.snapshot_summary(snapshot)
+    assert exchange["request"]["headers"]["Authorization"] == "<redacted>"
+    assert exchange["request"]["headers"]["X-Forwarded-Host"] == "scanner-canary"
+
+
+def test_configured_request_header_secrets_are_absent_from_complete_run_directory(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    secret_cookie = "SYNTHETIC_COOKIE_SECRET_29"
+    secret_auth = "SYNTHETIC_AUTH_SECRET_29"
+    state_home = tmp_path / "state"
+    monkeypatch.setenv("XDG_STATE_HOME", str(state_home))
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "headerproof.yaml").write_text(
+        "request_headers:\n"
+        f"  Cookie: 'session={secret_cookie}'\n"
+        f"  Authorization: 'Bearer {secret_auth}'\n"
+    )
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), ScannerFixtureHandler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        rc = header_active_scan.main_from_args(
+            [f"http://127.0.0.1:{server.server_port}/demo", "-silent"]
+        )
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=1)
+
+    assert rc in {0, 1}
+    run_dirs = list((state_home / "headerproof" / "runs").glob("headerproof-*"))
+    assert len(run_dirs) == 1
+    persisted = b"".join(path.read_bytes() for path in run_dirs[0].rglob("*") if path.is_file())
+    assert secret_cookie.encode() not in persisted
+    assert secret_auth.encode() not in persisted
+    assert b"<redacted>" in persisted

@@ -162,6 +162,7 @@ def scan_url(url: str, args: argparse.Namespace) -> dict[str, Any]:
                     timeout=budget.request_timeout(args.timeout),
                     client_context=context,
                 )
+        snap.persistence_redactions = dict(getattr(args, "request_headers", {}))
         probe_status: ProbeState = "error" if snap.error else "completed"
         coverage.transition(coverage_sequence, probe_status, error=snap.error)
         with result_lock:

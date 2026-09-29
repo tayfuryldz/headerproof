@@ -163,12 +163,20 @@ class HttpClient:
         return snap
 
 
+def persisted_request_headers(snap: HttpSnapshot) -> dict[str, str]:
+    redactions = {name.casefold(): value for name, value in snap.persistence_redactions.items()}
+    return {
+        name: "<redacted>" if redactions.get(name.casefold()) == value else value
+        for name, value in snap.request_headers.items()
+    }
+
+
 def snapshot_summary(snap: HttpSnapshot, save_body: bool = False) -> ExchangeEvidence:
     data: ExchangeEvidence = {
         "request": {
             "method": snap.request_method,
             "url": snap.request_url,
-            "headers": snap.request_headers,
+            "headers": persisted_request_headers(snap),
             "client_context": snap.client_context,
         },
         "response": {

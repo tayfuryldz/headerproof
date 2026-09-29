@@ -99,6 +99,7 @@ class HttpSnapshot:
     elapsed_ms: int = 0
     error: str = ""
     client_context: str = "default"
+    persistence_redactions: dict[str, str] = field(default_factory=dict, repr=False)
 
     def values(self, name: str) -> list[str]:
         return self.headers.get(name.lower(), [])
