@@ -1125,11 +1125,23 @@ def test_persisted_cache_finding_trace_resolves_to_probe_jsonl(tmp_path: Path) -
     }
     trace = persisted_signal["evidence"]["proof_trace"]
     assert len(trace) == 4
-    for stage in trace.values():
+    resolved = {}
+    for name, stage in trace.items():
         persisted = persisted_probes[(stage["probe_id"], stage["role"])]
         assert persisted["client_context"] == stage["client_context"]
         assert persisted["exchange"] is not None
         assert persisted["status"] == "completed"
+        resolved[name] = persisted
+
+    cache_key = persisted_signal["evidence"]["cache_key_evidence"]
+    assert cache_key["decision_rule"] == "reference_hit_plus_fresh_second_candidate"
+    assert cache_key["relationship"] == "separate"
+    assert cache_key["first_request_url"] == resolved["poison"]["exchange"]["request"]["url"]
+    assert cache_key["second_request_url"] == resolved["fresh_control"]["exchange"]["request"]["url"]
+    assert cache_key["reference_request_url"] == resolved["victim"]["exchange"]["request"]["url"]
+    assert cache_key["reference_hit_markers"]
+    assert cache_key["second_hit_markers"] == []
+    assert cache_key["reasons"] == ["reference_object_hit_while_second_candidate_not_hit"]
 
 
 def test_snapshot_summary_redacts_only_exact_configured_header_values() -> None:

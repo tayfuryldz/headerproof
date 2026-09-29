@@ -45,11 +45,10 @@ def test_reference_hit_plus_distinct_candidate_miss_is_separate_evidence() -> No
 
 def test_missing_snapshot_is_unverified() -> None:
     evidence = cache_identity_evidence(None, snap("https://example.test/?pa_cb=b", "MISS"))
-    assert evidence == {
-        "relationship": "unverified",
-        "request_urls_differ": False,
-        "reasons": ["missing_snapshot"],
-    }
+    assert evidence["relationship"] == "unverified"
+    assert evidence["request_urls_differ"] is False
+    assert evidence["reasons"] == ["missing_snapshot"]
+    assert evidence["decision_rule"] == "reference_hit_plus_fresh_second_candidate"
 
 CANARY = "pa-scan-cache-key-proof"
 
@@ -110,3 +109,31 @@ def test_query_ignored_by_cache_cannot_pass_cache_key_gate() -> None:
     assert evidence["state_machine_checks"]["cache_key_relationship_valid"] is False
     assert evidence["cache_key_evidence"]["relationship"] == "same_or_unverified"
     assert evidence["cache_key_evidence"]["second_hit_markers"] == ["x-cache=HIT"]
+
+
+def test_cache_key_evidence_record_is_self_describing() -> None:
+    first = snap("https://example.test/?pa_cb=one", "MISS")
+    second = snap("https://example.test/?pa_cb=two", "MISS")
+    reference = snap("https://example.test/?pa_cb=one", "HIT")
+    evidence = cache_identity_evidence(first, second, reference)
+    assert evidence["relationship"] == "separate"
+    assert evidence["decision_rule"] == "reference_hit_plus_fresh_second_candidate"
+    assert evidence["first_request_url"] == first.request_url
+    assert evidence["second_request_url"] == second.request_url
+    assert evidence["reference_request_url"] == reference.request_url
+    assert evidence["reference_cache_indicators"] == ["x-cache=HIT"]
+    assert evidence["reasons"] == ["reference_object_hit_while_second_candidate_not_hit"]
+
+
+def test_missing_cache_key_snapshot_keeps_stable_evidence_shape() -> None:
+    reference = snap("https://example.test/?pa_cb=one", "HIT")
+    evidence = cache_identity_evidence(None, snap("https://example.test/?pa_cb=two", "MISS"), reference)
+    expected_keys = {
+        "relationship", "decision_rule", "request_urls_differ",
+        "first_request_url", "second_request_url", "reference_request_url",
+        "first_cache_indicators", "second_cache_indicators", "reference_cache_indicators",
+        "first_hit_markers", "second_hit_markers", "reference_hit_markers", "reasons",
+    }
+    assert set(evidence) == expected_keys
+    assert evidence["relationship"] == "unverified"
+    assert evidence["reasons"] == ["missing_snapshot"]

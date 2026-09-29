@@ -78,7 +78,17 @@ def cache_identity_evidence(
     if first is None or second is None:
         return {
             "relationship": "unverified",
+            "decision_rule": "reference_hit_plus_fresh_second_candidate",
             "request_urls_differ": False,
+            "first_request_url": first.request_url if first else "",
+            "second_request_url": second.request_url if second else "",
+            "reference_request_url": reference_hit.request_url if reference_hit else "",
+            "first_cache_indicators": cache_indicators(first) if first else [],
+            "second_cache_indicators": cache_indicators(second) if second else [],
+            "reference_cache_indicators": cache_indicators(reference_hit) if reference_hit else [],
+            "first_hit_markers": [],
+            "second_hit_markers": [],
+            "reference_hit_markers": shared_cache_hit_markers(cache_indicators(reference_hit)) if reference_hit else [],
             "reasons": ["missing_snapshot"],
         }
     first_markers = shared_cache_hit_markers(cache_indicators(first))
@@ -99,9 +109,14 @@ def cache_identity_evidence(
         reasons.append("no_independent_cache_key_proof")
     return {
         "relationship": relationship,
+        "decision_rule": "reference_hit_plus_fresh_second_candidate",
         "request_urls_differ": first.request_url != second.request_url,
+        "first_request_url": first.request_url,
+        "second_request_url": second.request_url,
+        "reference_request_url": reference_hit.request_url if reference_hit else "",
         "first_cache_indicators": cache_indicators(first),
         "second_cache_indicators": cache_indicators(second),
+        "reference_cache_indicators": cache_indicators(reference_hit) if reference_hit else [],
         "first_hit_markers": first_markers,
         "second_hit_markers": second_markers,
         "reference_hit_markers": reference_markers,
