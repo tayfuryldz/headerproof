@@ -38,6 +38,9 @@ def cache_indicators(snap: HttpSnapshot) -> list[str]:
         "cdn-cache-control",
         "surrogate-control",
         "akamai-cache-status",
+        "x-litespeed-cache",
+        "x-lsadc-cache",
+        "x-qc-cache",
         "server-timing",
     ):
         value = header_join(snap, name)
@@ -55,7 +58,10 @@ def looks_cacheable(snap: HttpSnapshot) -> tuple[bool, list[str]]:
         return False, indicators
     active = any(
         marker in " ".join(indicators).lower()
-        for marker in ("max-age", "s-maxage", "public", "age=", "x-cache", "cf-cache-status", "etag")
+        for marker in (
+            "max-age", "s-maxage", "public", "age=", "x-cache", "cf-cache-status", "etag",
+            "x-litespeed-cache", "x-lsadc-cache", "x-qc-cache",
+        )
     )
     return active, indicators
 
@@ -121,6 +127,11 @@ def shared_cache_hit_markers(indicators: list[str]) -> list[str]:
             # with shielding). Any HIT component means a cache satisfied at least
             # one leg of the request path.
             if re.search(r"\bhit(?:-[a-z0-9_-]+)?\b", value_l):
+                markers.append(indicator)
+        elif name_l in {"x-litespeed-cache", "x-lsadc-cache", "x-qc-cache"}:
+            # LiteSpeed documents exact hit/miss states for these cache-status
+            # headers. Do not promote arbitrary values merely containing "hit".
+            if value_l.strip() == "hit":
                 markers.append(indicator)
         elif name_l == "cf-cache-status":
             # Cloudflare documents HIT, STALE, UPDATING and REVALIDATED as

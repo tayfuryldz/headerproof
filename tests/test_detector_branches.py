@@ -396,3 +396,21 @@ def test_templates_make_signal_and_filter_branches() -> None:
         "strict",
     ) is False
     assert signal_passes_fp_filter(filter_signal("response_splitting_crlf_candidate"), "strict") is True
+
+
+@pytest.mark.parametrize("name", ["X-LiteSpeed-Cache", "X-LSADC-Cache", "X-QC-Cache"])
+def test_litespeed_family_cache_headers_record_exact_hit_evidence(name: str) -> None:
+    indicators = cache_indicators(snap({name: "hit"}))
+    expected = f"{name.lower()}=hit"
+    assert expected in indicators
+    assert shared_cache_hit_markers(indicators) == [expected]
+    assert looks_cacheable(snap({name: "hit"}))[0] is True
+
+
+@pytest.mark.parametrize(
+    "value",
+    ["miss", "bypass", "hit-ish", "not-hit", "hit, miss", "cache-hit", ""],
+)
+def test_litespeed_cache_status_does_not_accept_ambiguous_or_non_hit_values(value: str) -> None:
+    indicators = cache_indicators(snap({"X-LiteSpeed-Cache": value}))
+    assert shared_cache_hit_markers(indicators) == []

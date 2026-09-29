@@ -312,3 +312,39 @@ def test_confirmed_flow_exposes_exact_cache_proof_trace() -> None:
     assert {item["role"] for item in trace.values()} == {
         "cache-clean-before", "cache-poison", "cache-victim", "cache-fresh-control"
     }
+
+
+def test_litespeed_hit_can_supply_only_shared_cache_hit_evidence() -> None:
+    flow = valid_flow()
+    replace_snapshot(
+        flow,
+        "victim",
+        headers={"Cache-Control": "public, max-age=120", "X-LiteSpeed-Cache": "hit"},
+    )
+    poison = flow["poison"]
+    assert isinstance(poison, header_active_scan.HttpSnapshot)
+    signals = header_active_scan.analyze_header_probe(
+        "X-Forwarded-Host", CANARY, "gate", flow["clean"], poison, flow["victim"], flow["control"], False
+    )
+    confirmed = next(signal for signal in signals if signal["type"] == "cache_poisoning_shared_cache_confirmed")
+    checks = confirmed["evidence"]["state_machine_checks"]
+    assert checks["shared_cache_hit_marker_present"] is True
+    assert "x-litespeed-cache=hit" in confirmed["evidence"]["shared_cache_hit_markers"]
+
+
+def test_litespeed_miss_cannot_supply_shared_cache_hit_evidence() -> None:
+    flow = valid_flow()
+    replace_snapshot(
+        flow,
+        "victim",
+        headers={"Cache-Control": "public, max-age=120", "X-LiteSpeed-Cache": "miss"},
+    )
+    poison = flow["poison"]
+    assert isinstance(poison, header_active_scan.HttpSnapshot)
+    signals = header_active_scan.analyze_header_probe(
+        "X-Forwarded-Host", CANARY, "gate", flow["clean"], poison, flow["victim"], flow["control"], False
+    )
+    reproduced = next(signal for signal in signals if signal["type"] == "cache_poisoning_cross_request_reproduction")
+    assert reproduced["evidence"]["state_machine_checks"]["shared_cache_hit_marker_present"] is False
+    assert reproduced["assessment"]["technical_gate"] == "failed"
+    assert not any(signal["type"] == "cache_poisoning_shared_cache_confirmed" for signal in signals)
