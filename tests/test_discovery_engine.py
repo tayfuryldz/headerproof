@@ -437,3 +437,13 @@ def test_discovered_header_finding_links_back_to_singleton_discovery_probes() ->
         and "X-Forwarded-Scheme" in (probe.get("exchange") or {}).get("request", {}).get("headers", {})
     }
     assert set(trace["probe_ids"]) <= persisted
+
+
+def test_discovery_result_persists_detector_aware_dynamic_response_policy() -> None:
+    result = run_fixture()
+    policy = result["discovery"]["dynamic_response_policy"]
+    assert policy["detector"] == "cache-poisoning-discovery"
+    assert policy["learned_dimensions"] == ["status", "body_length"]
+    assert "cache_evidence" in policy["preserved_dimensions"]
+    assert policy["generic_similarity"] is False
+    assert policy["timing_gate"] is False

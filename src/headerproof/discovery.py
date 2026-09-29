@@ -43,6 +43,7 @@ class DiscoveryBaseline:
     min_body_len: int
     max_body_len: int
     length_tolerance: int
+    learned_dimensions: tuple[str, ...] = ("status", "body_length")
 
 
 DiscoveryOutcome = Literal["affected", "unaffected", "inconclusive"]
@@ -77,6 +78,21 @@ def build_discovery_baseline(samples: Sequence[HttpSnapshot]) -> DiscoveryBaseli
         length_tolerance=max(MIN_LENGTH_DELTA, spread * 2),
     )
 
+
+
+def dynamic_response_policy(baseline: DiscoveryBaseline) -> dict[str, object]:
+    """Describe what discovery may learn as natural response variance.
+
+    Response headers and body content are intentionally excluded. In particular,
+    cache evidence headers must remain exact observations for detector gates.
+    """
+    return {
+        "detector": "cache-poisoning-discovery",
+        "learned_dimensions": list(baseline.learned_dimensions),
+        "preserved_dimensions": ["response_headers", "body_content", "cache_evidence"],
+        "generic_similarity": False,
+        "timing_gate": False,
+    }
 
 
 def update_discovery_baseline(baseline: DiscoveryBaseline, sample: HttpSnapshot) -> bool:

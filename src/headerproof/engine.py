@@ -33,6 +33,7 @@ from .discovery import (
     build_discovery_baseline,
     dedupe_candidates,
     discovery_batches,
+    dynamic_response_policy,
     isolate_candidates,
     response_differs,
     update_discovery_baseline,
@@ -591,6 +592,7 @@ def scan_url(url: str, args: argparse.Namespace) -> dict[str, Any]:
                 "truncation_reason": truncation_reason or None,
                 "request_limit_reached": discovery_requests >= MAX_DISCOVERY_REQUESTS,
                 "cache_isolation": "unverified_during_discovery",
+                "dynamic_response_policy": dynamic_response_policy(discovery_baseline),
             }
         else:
             result["discovery"] = {

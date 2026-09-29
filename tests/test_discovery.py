@@ -218,3 +218,37 @@ def test_new_auth_rate_limit_or_server_error_is_inconclusive_not_header_impact()
         assert response_differs(baseline, snap(status=status, body="error"), "marker") == DiscoveryDecision(
             "inconclusive", "batch_rejected"
         )
+
+
+def test_dynamic_response_policy_is_detector_scoped_and_preserves_cache_evidence() -> None:
+    from headerproof.discovery import dynamic_response_policy
+
+    baseline = build_discovery_baseline([snap(status=200, body="stable") for _ in range(3)])
+    assert baseline is not None
+    policy = dynamic_response_policy(baseline)
+    assert policy["detector"] == "cache-poisoning-discovery"
+    assert policy["learned_dimensions"] == ["status", "body_length"]
+    assert policy["preserved_dimensions"] == ["response_headers", "body_content", "cache_evidence"]
+    assert policy["generic_similarity"] is False
+    assert policy["timing_gate"] is False
+
+
+def test_adaptive_learning_never_mutates_response_cache_evidence() -> None:
+    from headerproof.detectors import cache_indicators, shared_cache_hit_markers
+    from headerproof.discovery import update_discovery_baseline
+
+    baseline = build_discovery_baseline([snap(status=200, body="short") for _ in range(3)])
+    assert baseline is not None
+    dynamic = snap(status=201, body="x" * 500)
+    dynamic.headers = {
+        "age": ["9"],
+        "x-cache": ["HIT"],
+        "etag": ['"dynamic"'],
+        "cache-status": ["hit"],
+    }
+    before = cache_indicators(dynamic)
+    before_markers = shared_cache_hit_markers(before)
+    assert update_discovery_baseline(baseline, dynamic) is True
+    assert cache_indicators(dynamic) == before
+    assert shared_cache_hit_markers(cache_indicators(dynamic)) == before_markers
+    assert {"age=9", "x-cache=HIT", 'etag="dynamic"', "cache-status=hit"} <= set(before)
