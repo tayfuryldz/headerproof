@@ -282,3 +282,136 @@ def test_discovery_url_budget_exhaustion_is_explicit() -> None:
     assert result["discovery"]["truncated"] is True
     assert result["discovery"]["truncation_reason"] == "url_budget_exhausted"
     assert any(error.get("error_type") == "url_timeout" for error in result["errors"])
+
+
+class LateVarianceHandler(BaseHTTPRequestHandler):
+    request_count = 0
+
+    def log_message(self, _format: str, *args: Any) -> None:
+        return
+
+    def do_GET(self) -> None:
+        type(self).request_count += 1
+        large = type(self).request_count >= 5 and type(self).request_count % 2 == 1
+        body = ("page;" + ("feed=" + "x" * 420 if large else "feed=short")).encode()
+        self.send_response(200)
+        self.send_header("Content-Type", "text/plain")
+        self.send_header("X-Cache", "MISS")
+        self.end_headers()
+        self.wfile.write(body)
+
+
+def test_adaptive_baseline_learns_late_natural_variance_without_exhausting_discovery() -> None:
+    LateVarianceHandler.request_count = 0
+    server = ThreadingHTTPServer(("127.0.0.1", 0), LateVarianceHandler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        url = f"http://127.0.0.1:{server.server_port}/dynamic"
+        args = parse_cli_args([url])
+        args.enabled_checks = {"cache-poisoning", "header-injection", "content-spoofing"}
+        args.per_url_concurrency = 1
+        args.concurrency = 1
+        args.no_live_alerts = True
+        result = scan_url(url, args)
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=1)
+
+    discovery = result["discovery"]
+    assert discovery["discovered_headers"] == []
+    assert discovery["request_limit_reached"] is False
+    assert discovery["truncated"] is False
+    assert discovery["requests"] < 16
+    assert any(probe["role"] == "discovery-negative-control" for probe in result["probes"])
+
+
+class StatusVarianceHandler(BaseHTTPRequestHandler):
+    request_count = 0
+
+    def log_message(self, _format: str, *args: Any) -> None:
+        return
+
+    def do_GET(self) -> None:
+        type(self).request_count += 1
+        status = 201 if type(self).request_count >= 5 and type(self).request_count % 2 == 1 else 200
+        body = b"stable"
+        self.send_response(status)
+        self.send_header("Content-Type", "text/plain")
+        self.end_headers()
+        self.wfile.write(body)
+
+
+def test_adaptive_baseline_can_learn_clean_status_variance() -> None:
+    StatusVarianceHandler.request_count = 0
+    server = ThreadingHTTPServer(("127.0.0.1", 0), StatusVarianceHandler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        url = f"http://127.0.0.1:{server.server_port}/status-dynamic"
+        args = parse_cli_args([url])
+        args.enabled_checks = {"cache-poisoning", "header-injection", "content-spoofing"}
+        args.per_url_concurrency = 1
+        args.concurrency = 1
+        args.no_live_alerts = True
+        result = scan_url(url, args)
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=1)
+
+    assert result["discovery"]["discovered_headers"] == []
+    assert result["discovery"]["request_limit_reached"] is False
+
+
+class RealHeaderImpactWithNoiseHandler(BaseHTTPRequestHandler):
+    request_count = 0
+
+    def log_message(self, _format: str, *args: Any) -> None:
+        return
+
+    def do_GET(self) -> None:
+        type(self).request_count += 1
+        scheme = self.headers.get("X-Forwarded-Scheme", "")
+        # Natural size variance exists, but the candidate still has an attributable marker.
+        noise = "n" * (260 if type(self).request_count % 2 else 8)
+        body = f"noise={noise}; scheme={scheme or 'https'}".encode()
+        self.send_response(200)
+        self.send_header("Content-Type", "text/plain")
+        self.send_header("Age", str(type(self).request_count))
+        self.send_header("ETag", f'"v{type(self).request_count}"')
+        self.send_header("X-Cache", "MISS")
+        self.end_headers()
+        self.wfile.write(body)
+
+
+def test_adaptive_baseline_never_suppresses_attributable_marker_or_cache_evidence() -> None:
+    RealHeaderImpactWithNoiseHandler.request_count = 0
+    server = ThreadingHTTPServer(("127.0.0.1", 0), RealHeaderImpactWithNoiseHandler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        url = f"http://127.0.0.1:{server.server_port}/impact"
+        args = parse_cli_args([url])
+        args.enabled_checks = {"cache-poisoning", "header-injection", "content-spoofing"}
+        args.per_url_concurrency = 1
+        args.concurrency = 1
+        args.no_live_alerts = True
+        result = scan_url(url, args)
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=1)
+
+    discovered = {item["name"]: item["reason"] for item in result["discovery"]["discovered_headers"]}
+    assert discovered["X-Forwarded-Scheme"] == "marker_reflected"
+    singleton = next(
+        probe for probe in result["probes"]
+        if probe["role"] == "discovery-singleton"
+        and "X-Forwarded-Scheme" in (probe.get("exchange") or {}).get("request", {}).get("headers", {})
+    )
+    response_headers = singleton["exchange"]["response"]["headers"]
+    assert response_headers["age"]
+    assert response_headers["etag"]
+    assert response_headers["x-cache"] == "MISS"

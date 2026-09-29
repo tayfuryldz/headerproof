@@ -174,3 +174,47 @@ def test_interleaved_partition_can_break_contiguous_cancellation_pair() -> None:
     # A and B cancel only when sent together. The second partition separates them.
     assert ["X-A", "X-C"] in batches
     assert ["X-B", "X-D"] in batches
+
+
+def test_clean_control_expands_adaptive_baseline() -> None:
+    from headerproof.discovery import update_discovery_baseline
+
+    baseline = build_discovery_baseline([snap(body="x" * 100) for _ in range(3)])
+    assert baseline is not None
+    changed = update_discovery_baseline(baseline, snap(body="x" * 420))
+    assert changed is True
+    assert baseline.max_body_len == 420
+    assert baseline.length_tolerance == 640
+    assert response_differs(baseline, snap(body="x" * 420), "marker") == DiscoveryDecision(
+        "unaffected", "within_baseline_variance"
+    )
+
+
+def test_failed_clean_control_does_not_expand_adaptive_baseline() -> None:
+    from headerproof.discovery import update_discovery_baseline
+
+    baseline = build_discovery_baseline([snap(body="x" * 100) for _ in range(3)])
+    assert baseline is not None
+    failed = snap(body="x" * 500)
+    failed.error = "timeout"
+    assert update_discovery_baseline(baseline, failed) is False
+    assert baseline.max_body_len == 100
+
+
+def test_adaptive_baseline_does_not_learn_auth_rate_limit_or_server_errors() -> None:
+    from headerproof.discovery import update_discovery_baseline
+
+    baseline = build_discovery_baseline([snap(status=200, body="stable") for _ in range(3)])
+    assert baseline is not None
+    for status in (401, 403, 429, 500, 503):
+        assert update_discovery_baseline(baseline, snap(status=status, body="error")) is False
+    assert baseline.statuses == {200}
+
+
+def test_new_auth_rate_limit_or_server_error_is_inconclusive_not_header_impact() -> None:
+    baseline = build_discovery_baseline([snap(status=200, body="stable") for _ in range(3)])
+    assert baseline is not None
+    for status in (401, 403, 429, 500, 503):
+        assert response_differs(baseline, snap(status=status, body="error"), "marker") == DiscoveryDecision(
+            "inconclusive", "batch_rejected"
+        )

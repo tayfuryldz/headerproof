@@ -6,7 +6,8 @@ from typing import Callable, Literal, Sequence
 from .detectors import canary_locations
 from .models import HttpSnapshot
 
-REJECTION_STATUSES = frozenset({400, 413, 414, 431, 494, 502})
+REJECTION_STATUSES = frozenset({400, 401, 403, 413, 414, 429, 431, 494, 502})
+SERVER_ERROR_STATUSES = frozenset(range(500, 600))
 BASELINE_SAMPLES = 3
 MIN_LENGTH_DELTA = 128
 BATCH_SIZE = 8
@@ -36,7 +37,7 @@ DISCOVERY_HEADERS: tuple[str, ...] = (
 )
 
 
-@dataclass(frozen=True)
+@dataclass
 class DiscoveryBaseline:
     statuses: frozenset[int]
     min_body_len: int
@@ -77,6 +78,25 @@ def build_discovery_baseline(samples: Sequence[HttpSnapshot]) -> DiscoveryBaseli
     )
 
 
+
+def update_discovery_baseline(baseline: DiscoveryBaseline, sample: HttpSnapshot) -> bool:
+    """Learn completed clean-control variance without weakening marker attribution.
+
+    Returns True when the learned status/body-length envelope changed.
+    Cache headers and response bodies are deliberately not normalized here.
+    """
+    if sample.error or sample.status is None:
+        return False
+    if sample.status in REJECTION_STATUSES or sample.status in SERVER_ERROR_STATUSES:
+        return False
+    old = (baseline.statuses, baseline.min_body_len, baseline.max_body_len, baseline.length_tolerance)
+    baseline.statuses = frozenset((*baseline.statuses, int(sample.status)))
+    baseline.min_body_len = min(baseline.min_body_len, sample.body_len)
+    baseline.max_body_len = max(baseline.max_body_len, sample.body_len)
+    spread = baseline.max_body_len - baseline.min_body_len
+    baseline.length_tolerance = max(MIN_LENGTH_DELTA, spread * 2)
+    return old != (baseline.statuses, baseline.min_body_len, baseline.max_body_len, baseline.length_tolerance)
+
 def response_differs(
     baseline: DiscoveryBaseline,
     response: HttpSnapshot,
@@ -84,7 +104,9 @@ def response_differs(
 ) -> DiscoveryDecision:
     if response.error or response.status is None:
         return DiscoveryDecision("inconclusive", "request_not_completed")
-    if response.status in REJECTION_STATUSES and response.status not in baseline.statuses:
+    if (
+        response.status in REJECTION_STATUSES or response.status in SERVER_ERROR_STATUSES
+    ) and response.status not in baseline.statuses:
         return DiscoveryDecision("inconclusive", "batch_rejected")
     if canary_locations(response, marker):
         return DiscoveryDecision("affected", "marker_reflected")

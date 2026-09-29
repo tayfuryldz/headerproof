@@ -35,6 +35,7 @@ from .discovery import (
     discovery_batches,
     isolate_candidates,
     response_differs,
+    update_discovery_baseline,
 )
 from .evidence import make_signal, signal_passes_fp_filter
 from .input import add_query, add_raw_query
@@ -503,7 +504,35 @@ def scan_url(url: str, args: argparse.Namespace) -> dict[str, Any]:
                 discovery_requests += 1
                 if response is None:
                     return DiscoveryDecision("inconclusive", "request_not_completed")
-                return response_differs(discovery_baseline, response, discovery_marker)
+                decision = response_differs(discovery_baseline, response, discovery_marker)
+                if decision.outcome != "affected" or decision.reason == "marker_reflected":
+                    return decision
+                controls: list[HttpSnapshot] = []
+                for _ in range(2):
+                    if discovery_requests >= MAX_DISCOVERY_REQUESTS or budget.expired():
+                        return DiscoveryDecision("inconclusive", "negative_control_budget_exhausted")
+                    control_id = new_probe_id("discovery-control")
+                    control_url = add_query(url, {"pa_discovery": control_id})
+                    control = fetch_budgeted(
+                        control_url,
+                        headers={"Cache-Control": "no-cache", "Pragma": "no-cache"},
+                        probe_id=control_id,
+                        role="discovery-negative-control",
+                        detector="cache-poisoning",
+                        client_context=f"{control_id}:discovery-control",
+                    )
+                    discovery_requests += 1
+                    if control is None:
+                        return DiscoveryDecision("inconclusive", "negative_control_not_completed")
+                    controls.append(control)
+                learned = False
+                for control in controls:
+                    control_decision = response_differs(discovery_baseline, control, discovery_marker)
+                    if control_decision.outcome == "affected":
+                        learned = update_discovery_baseline(discovery_baseline, control) or learned
+                if learned and response_differs(discovery_baseline, response, discovery_marker).outcome == "unaffected":
+                    return DiscoveryDecision("unaffected", "natural_variance_learned")
+                return decision
 
             discovered: list[DiscoveredHeader] = []
             evaluated_candidate_names: set[str] = set()
