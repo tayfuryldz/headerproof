@@ -63,6 +63,49 @@ def looks_cacheable(snap: HttpSnapshot) -> tuple[bool, list[str]]:
     return active, indicators
 
 
+def cache_identity_evidence(
+    first: HttpSnapshot | None,
+    second: HttpSnapshot | None,
+    reference_hit: HttpSnapshot | None = None,
+) -> dict[str, Any]:
+    """Describe whether two requests have evidence of separate cache identities.
+
+    URL inequality is context only. It is never sufficient proof that a cache key differs.
+    """
+    if first is None or second is None:
+        return {
+            "relationship": "unverified",
+            "request_urls_differ": False,
+            "reasons": ["missing_snapshot"],
+        }
+    first_markers = shared_cache_hit_markers(cache_indicators(first))
+    second_markers = shared_cache_hit_markers(cache_indicators(second))
+    reasons: list[str] = []
+    # A cache hit on the second candidate means it did not demonstrate a fresh
+    # cache object. A miss alone is not enough to prove key participation: it
+    # can also result from eviction, expiry, bypass, or an unpopulated cache.
+    reference_markers = shared_cache_hit_markers(cache_indicators(reference_hit)) if reference_hit else []
+    if second_markers:
+        relationship = "same_or_unverified"
+        reasons.append("second_candidate_has_cache_hit_evidence")
+    elif reference_markers and first.request_url != second.request_url:
+        relationship = "separate"
+        reasons.append("reference_object_hit_while_second_candidate_not_hit")
+    else:
+        relationship = "unverified"
+        reasons.append("no_independent_cache_key_proof")
+    return {
+        "relationship": relationship,
+        "request_urls_differ": first.request_url != second.request_url,
+        "first_cache_indicators": cache_indicators(first),
+        "second_cache_indicators": cache_indicators(second),
+        "first_hit_markers": first_markers,
+        "second_hit_markers": second_markers,
+        "reference_hit_markers": reference_markers,
+        "reasons": reasons,
+    }
+
+
 def shared_cache_hit_markers(indicators: list[str]) -> list[str]:
     markers: list[str] = []
     for indicator in indicators:
@@ -499,12 +542,13 @@ def analyze_header_probe(
     control_indicators = cache_indicators(control) if control else []
     snapshots = (clean_before, probe, victim, control)
     completed_stages = all(snapshot_completed(item) for item in snapshots)
+    cache_key_evidence = cache_identity_evidence(probe, control, victim)
     cache_key_relationship = bool(
         clean_before
         and victim
         and control
         and clean_before.request_url == probe.request_url == victim.request_url
-        and control.request_url != probe.request_url
+        and cache_key_evidence["relationship"] == "separate"
     )
     client_contexts = [item.client_context for item in snapshots if item is not None]
     isolated_client_contexts = len(client_contexts) == 4 and len(set(client_contexts)) == 4
@@ -559,6 +603,7 @@ def analyze_header_probe(
         "clean_before_cache_indicators": clean_before_indicators,
         "victim_cache_indicators": victim_indicators,
         "fresh_key_control_cache_indicators": control_indicators,
+        "cache_key_evidence": cache_key_evidence,
         "shared_cache_confirmed": shared_confirmed,
     }
     if victim_locations and (cacheable or victim_indicators):
