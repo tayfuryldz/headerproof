@@ -36,8 +36,7 @@ def test_http_callback_and_event_query(tmp_path: Path) -> None:
         with request.urlopen(f"{base}/c/abc123", timeout=1) as response:
             assert response.status == 200
         events = query_events(base, "abc123")
-        assert len(events) == 1
-        assert events[0]["protocol"] == "http"
+        assert events == [{"protocol": "http", "token": "abc123"}]
         assert (tmp_path / "events.jsonl").exists()
     finally:
         server.shutdown()
@@ -70,7 +69,10 @@ def test_oob_signal_passes_template_gate() -> None:
     signals = analyze_oob_header_probe(
         "X-Forwarded-Host",
         "deadbeef",
-        [{"protocol": "dns"}, {"protocol": "http"}],
+        [
+            {"protocol": "dns", "token": "deadbeef", "source": "127.0.0.1"},
+            {"protocol": "http", "token": "deadbeef", "detail": "ignored"},
+        ],
         snapshot(),
         False,
     )
@@ -79,6 +81,40 @@ def test_oob_signal_passes_template_gate() -> None:
     assert signals[0]["type"] == "blind_header_oob_confirmed"
     assert signals[0]["assessment"]["technical_gate"] == "passed"
     assert signals[0]["assessment"]["state"] == "cross_request_confirmed"
+    assert signals[0]["evidence"]["oob_confirmed"] is True
+    assert signals[0]["evidence"]["event_count"] == 2
+    assert signals[0]["evidence"]["oob_callbacks"] == [
+        {"protocol": "dns", "token": "deadbeef"},
+        {"protocol": "http", "token": "deadbeef"},
+    ]
+
+
+def test_oob_signal_requires_exact_matching_callback_token() -> None:
+    cases = [
+        [{"token": "wrong-token", "protocol": "http"}],
+        [{"protocol": "http"}],
+        [{"token": "deadbeef"}],
+        [{"token": "deadbeef", "protocol": "unrelated"}],
+        ["not-an-event", None, {"token": "deadbeef", "protocol": "smtp"}],
+    ]
+    for events in cases:
+        assert analyze_oob_header_probe("X-Forwarded-Host", "deadbeef", events, snapshot(), False) == []
+
+    mixed = analyze_oob_header_probe(
+        "X-Forwarded-Host",
+        "deadbeef",
+        [
+            {"token": "wrong-token", "protocol": "dns"},
+            {"token": "deadbeef", "protocol": "http", "source": "10.0.0.8"},
+            {"token": "deadbeef", "protocol": "ftp"},
+        ],
+        snapshot(),
+        False,
+    )
+    assert len(mixed) == 1
+    assert mixed[0]["evidence"]["oob_callbacks"] == [{"protocol": "http", "token": "deadbeef"}]
+    assert mixed[0]["evidence"]["protocols"] == ["http"]
+    assert "source" not in mixed[0]["evidence"]["oob_callbacks"][0]
 
 
 def test_engine_oob_probe_reaches_callback_and_promotes_finding() -> None:
@@ -138,3 +174,6 @@ def test_engine_oob_probe_reaches_callback_and_promotes_finding() -> None:
     assert findings[0]["assessment"]["technical_gate"] == "passed"
     assert findings[0]["assessment"]["state"] == "cross_request_confirmed"
     assert findings[0]["evidence"]["oob_confirmed"] is True
+    assert findings[0]["evidence"]["oob_callbacks"] == [
+        {"protocol": "http", "token": findings[0]["evidence"]["oob_token"]}
+    ]

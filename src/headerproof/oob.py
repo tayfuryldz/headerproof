@@ -48,6 +48,32 @@ def callback_host(token: str, domain: str) -> str:
     return f"{token}.{domain.strip('.')}"
 
 
+OOB_EVENT_PROTOCOLS = frozenset({"http", "dns"})
+
+
+def accepted_oob_events(events: object, token: str) -> list[dict[str, str]]:
+    """Keep callbacks that belong to this probe token.
+
+    An accepted event is an object with string ``token`` exactly equal to the
+    requested probe token and ``protocol`` of ``http`` or ``dns``. Source
+    addresses and free-form detail are dropped.
+    """
+    if not isinstance(token, str) or not token or not isinstance(events, list):
+        return []
+    accepted: list[dict[str, str]] = []
+    for item in events:
+        if not isinstance(item, dict):
+            continue
+        event_token = item.get("token")
+        protocol = item.get("protocol")
+        if not isinstance(event_token, str) or event_token != token:
+            continue
+        if not isinstance(protocol, str) or protocol not in OOB_EVENT_PROTOCOLS:
+            continue
+        accepted.append({"protocol": protocol, "token": event_token})
+    return accepted
+
+
 def query_events(api_base: str, token: str, timeout: float = 1.0) -> list[dict[str, Any]]:
     url = f"{api_base.rstrip('/')}/api/events/{parse.quote(token, safe='')}"
     try:
@@ -56,7 +82,7 @@ def query_events(api_base: str, token: str, timeout: float = 1.0) -> list[dict[s
     except (OSError, error.URLError, json.JSONDecodeError):
         return []
     events = payload.get("events", []) if isinstance(payload, dict) else []
-    return [item for item in events if isinstance(item, dict)] if isinstance(events, list) else []
+    return accepted_oob_events(events, token)
 
 
 def wait_for_event(api_base: str, token: str, timeout: float = 0.75) -> list[dict[str, Any]]:

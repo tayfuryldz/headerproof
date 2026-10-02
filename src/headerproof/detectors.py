@@ -6,6 +6,7 @@ from typing import Any
 from .constants import CACHEABLE_STATUSES, LIKELY_AUTH_COOKIE, TEXTUAL_CONTENT, UNSAFE_METHODS
 from .evidence import make_signal
 from .models import HttpSnapshot
+from .oob import accepted_oob_events
 from .templates import extract_template_evidence, template_matches
 
 
@@ -395,11 +396,12 @@ def analyze_oob_header_probe(
     probe: HttpSnapshot,
     save_body: bool,
 ) -> list[dict[str, Any]]:
-    protocols = sorted({str(item.get("protocol", "unknown")) for item in events})
+    matched = accepted_oob_events(events, token)
+    protocols = sorted({item["protocol"] for item in matched})
     context = {
-        "oob_confirmed": bool(events),
+        "oob_confirmed": bool(matched),
         "protocols": protocols,
-        "event_count": len(events),
+        "event_count": len(matched),
     }
     if not template_matches("blind_header_oob_confirmed", context):
         return []
@@ -408,7 +410,12 @@ def analyze_oob_header_probe(
             "header-injection", "blind_header_oob_confirmed", "high", "high",
             "Header probe produced an out-of-band callback",
             template_evidence(
-                "blind_header_oob_confirmed", context, probe_header=header_name, oob_token=token, oob_confirmed=True
+                "blind_header_oob_confirmed",
+                context,
+                probe_header=header_name,
+                oob_token=token,
+                oob_confirmed=True,
+                oob_callbacks=matched,
             ),
             probe,
             "Confirm the callback is attributable to the tested request and document the backend interaction.",
